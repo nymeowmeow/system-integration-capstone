@@ -5,7 +5,9 @@ from std_msgs.msg import Bool
 from dbw_mkz_msgs.msg import ThrottleCmd, SteeringCmd, BrakeCmd, SteeringReport
 from geometry_msgs.msg import TwistStamped, PoseStamped
 from styx_msgs.msg import Lane
+import numpy as np
 import math
+import tf
 
 from twist_controller import Controller
 
@@ -64,16 +66,19 @@ class DBWNode(object):
 	self.twist_cmd        = None
 	self.is_dbw_enabled   = None
 	self.current_velocity = None
-	self.currTime         = rospy.rostime.get_time()
+	#self.currTime         = rospy.rostime.get_time()
+	self.currTime         = rospy.get_time()
 	self.lastaction       = None
 	self.final_waypoints  = None
 	self.current_pose     = None
+	self.current_steering = None
 
 	rospy.Subscriber('/twist_cmd', TwistStamped, self.twist_cb, queue_size=1)
 	rospy.Subscriber('/vehicle/dbw_enabled', Bool, self.dbw_cb, queue_size=1)
 	rospy.Subscriber('/current_velocity', TwistStamped, self.velocity_cb, queue_size=1)
 	#rospy.Subscriber('/final_waypoints', Lane, self.final_waypoints_cb, queue_size=1)
 	#rospy.Subscriber('/current_pose', PoseStamped, self.current_pose_cb, queue_size=1)
+	rospy.Subscriber('/vehicle/steering_report', SteeringReport, self.report_cb, queue_size=1)
         self.loop()
 
     def loop(self):
@@ -83,15 +88,16 @@ class DBWNode(object):
 	    elapsed = currTime - self.currTime
 	    self.currTime = currTime
 	    if self.current_velocity is not None and self.twist_cmd is not None:
-		cte = self.calculateCTE(self.current_pose, self.final_waypoints)
-		#cte = self.twist_cmd.twist.angular.z
+		#cte = self.calculateCTE(self.current_pose, self.final_waypoints)
+		cte = None
                 throttle, brake, steering = self.controller.control(self.twist_cmd.twist.linear.x,
-                                                                    self.twist_cmd.twist.angular.z,
-                                                                    self.current_velocity.twist.linear.x,
-								    self.current_velocity.twist.angular.z,
-                                                                    self.is_dbw_enabled,
-								    elapsed,
-								    cte)
+                                                self.twist_cmd.twist.angular.z,
+                                                self.current_velocity.twist.linear.x,
+		                                self.current_velocity.twist.angular.z,
+                                                self.is_dbw_enabled,
+					        elapsed,
+					        self.current_steering,
+						cte)
                 if self.is_dbw_enabled:
 		    #publish the control command only if dbw is enabled
 		    action = 'brake' if brake > 0.0 else 'throttle'
@@ -108,6 +114,25 @@ class DBWNode(object):
 	if current_pose is None or final_waypoints is None:
 	    return None
 
+	_, _, angle = tf.transformations.euler_from_quaternion([current_pose.orientation.x,
+				current_pose.orientation.y,
+				current_pose.orientation.z,
+				current_pose.orientation.w])
+
+	xorigin = current_pose.position.x
+	yorigin = current_pose.position.y 
+	waypoints_matrix = np.array([ [pt.pose.pose.position.x - xorigin, 
+		pt.pose.pose.position.y - yorigin] for pt in final_waypoints])
+	rotationMatrix = np.array([
+			[np.cos(angle), -np.sin(angle)],
+			[np.sin(angle), np.cos(angle)]
+		   ])
+
+	rotated = np.dot( waypoints_matrix, rotationMatrix)
+	coefficients = np.polyfit(rotated[:, 0], rotated[:, 1], 3)
+	#target = np.polyval(np.polyder(coefficients, 1), 0)
+	#target = math.atan(target)
+	return math.atan(np.polyval(coefficients, 10))
 
     def publish(self, throttle, brake, steer):
 	if throttle is not None:
@@ -129,6 +154,9 @@ class DBWNode(object):
             bcmd.pedal_cmd = brake
             self.brake_pub.publish(bcmd)
 
+    def report_cb(self, msg):
+	self.current_steering = msg.steering_wheel_angle_cmd
+	
     def twist_cb(self, msg):
 	self.twist_cmd = msg
 
@@ -143,7 +171,7 @@ class DBWNode(object):
 	self.final_waypoints = msg.waypoints
 
     def current_pose_cb(self, msg):
-	self.current_pose = msg
+	self.current_pose = msg.pose
 
 if __name__ == '__main__':
     DBWNode()

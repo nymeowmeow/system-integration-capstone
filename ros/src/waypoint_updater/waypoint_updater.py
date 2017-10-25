@@ -46,8 +46,8 @@ class WaypointUpdater(object):
 	self.waypoints          = None #waypoints of the track, 10902 waypoints
 	self.pose               = None #current position
         self.prev_waypoint      = 0
-	self.rate               = rospy.Rate(10)
-	self.speed              = rospy.get_param('/waypoint_loader/velocity', 10)*MPH
+	self.rate               = rospy.Rate(20)
+	self.speed              = rospy.get_param('/waypoint_loader/velocity', 10)*KMPH
 	self.seq                = 0    #sequence number
 	self.frame_id           = '/world'
         self.red_light_waypoint = None
