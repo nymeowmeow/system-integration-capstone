@@ -28,17 +28,16 @@ TODO (for Yousuf and Aaron): Stopline location for each traffic light.
 LOOKAHEAD_WPS = 200 # Number of waypoints we will publish. You can change this number
 KMPH = 0.2778
 MPH=0.44704
-STOP_DISTANCE = 5
+STOP_DISTANCE = 10
 
 class WaypointUpdater(object):
     def __init__(self):
         rospy.init_node('waypoint_updater')
 
-        rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb)  #45-50Hz
-        rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb)  #once 
-        rospy.Subscriber('/traffic_waypoint', Int32, self.traffic_cb) #10Hz
-        rospy.Subscriber('/obstacle_waypoint', PoseStamped, self.obstacle_cb)
-
+        rospy.Subscriber('/current_pose', PoseStamped, self.pose_cb,queue_size=1)  #45-50Hz
+        rospy.Subscriber('/base_waypoints', Lane, self.waypoints_cb, queue_size=1)  #once 
+        rospy.Subscriber('/traffic_waypoint', Int32, self.traffic_cb, queue_size=1) #10Hz
+        rospy.Subscriber('/obstacle_waypoint', PoseStamped, self.obstacle_cb, queue_size=1)
 
         self.final_waypoints_pub = rospy.Publisher('final_waypoints', 
 						Lane, queue_size=1)
@@ -46,13 +45,14 @@ class WaypointUpdater(object):
 	self.waypoints          = None #waypoints of the track, 10902 waypoints
 	self.pose               = None #current position
         self.prev_waypoint      = 0
-	self.rate               = rospy.Rate(20)
+	self.rate               = rospy.Rate(10)
 	self.speed              = rospy.get_param('/waypoint_loader/velocity', 10)*KMPH
 	self.seq                = 0    #sequence number
 	self.frame_id           = '/world'
         self.red_light_waypoint = None
 	self.waypoint_len       = None
 	self.distance_threshold = 10   #10m
+	self.max_decl           = 1
 
 	self.processLoop()
 
@@ -66,16 +66,32 @@ class WaypointUpdater(object):
 		continue
 
 	    start_pos = self.next_waypoint()
-	    rospy.logerr('start pos: {}'.format(start_pos))
+	    if (start_pos % 500) == 0:
+	        rospy.logerr('start pos: {}'.format(start_pos))
 	    end = start_pos + LOOKAHEAD_WPS
 	    if end > len(self.waypoints):
 		endpos = end - len(self.waypoints) 
 		waypoints = self.waypoints[start_pos:] + self.waypoints[:endpos]
 	    else:
 	        waypoints = self.waypoints[start_pos:start_pos + LOOKAHEAD_WPS]
-	    targetSpeed = 0 if self.stopOnRedLight() else self.speed
-	    for idx in range(len(waypoints)):
-		self.set_waypoint_velocity(waypoints, idx, targetSpeed)
+	    if self.stopOnRedLight():
+		red_index = max(0, self.red_light_waypoint - start_pos)
+		redpose = waypoints[red_index]
+		redpose.twist.twist.linear.x = 0
+
+		for i, wp in enumerate(waypoints):
+		    if i > red_index:
+			speed = 0
+		    else:
+			dist = Util.distance(wp.pose.pose.position, redpose.pose.pose.position)
+			dist = max(0, dist - STOP_DISTANCE)
+			speed = np.sqrt(2 * self.max_decl * dist)
+			if speed < 1.0:
+			    speed = 0
+		    wp.twist.twist.linear.x = min(speed, wp.twist.twist.linear.x, self.speed)
+	    else:
+	        for idx in range(len(waypoints)):
+		    self.set_waypoint_velocity(waypoints, idx, self.speed)
 
 	    #publish waypoints
 	    self.prev_waypoint = start_pos
@@ -88,13 +104,13 @@ class WaypointUpdater(object):
 	    rospy.logerr("invalid red light waypoint, out of range")
 
 	d = Util.distance(self.pose.position, self.waypoints[self.red_light_waypoint].pose.pose.position)
-	if d <= STOP_DISTANCE and self.aheadOf(self.waypoints[self.red_light_waypoint], self.pose):
+	if d <= 2*STOP_DISTANCE and self.aheadOf(self.waypoints[self.red_light_waypoint], self.pose):
 	    return True
 	return False
 
     def aheadOf(self, wp1, pose):
 	roll, pitch, yaw = tf.transformations.euler_from_quaternion([ pose.orientation.x, pose.orientation.y,
-		pose.orientation.y, pose.orientation.z])
+		pose.orientation.z, pose.orientation.w])
 	xy_vector = (wp1.pose.pose.position.x - pose.position.x, wp1.pose.pose.position.y - pose.position.y)
 	yaw_vector = (math.cos(yaw), math.sin(yaw)) 
 	return np.inner(xy_vector, yaw_vector) > 0
