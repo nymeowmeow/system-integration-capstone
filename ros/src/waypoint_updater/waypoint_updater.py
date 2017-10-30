@@ -66,7 +66,7 @@ class WaypointUpdater(object):
 		continue
 
 	    start_pos = self.next_waypoint()
-	    if (start_pos % 500) == 0:
+	    if (start_pos % 100) == 0:
 	        rospy.logerr('start pos: {}'.format(start_pos))
 	    end = start_pos + LOOKAHEAD_WPS
 	    if end > len(self.waypoints):
@@ -98,7 +98,8 @@ class WaypointUpdater(object):
  	    self.publish_waypoint(waypoints)
 
     def stopOnRedLight(self):
-	if self.red_light_waypoint is None or self.waypoints is None:
+	if self.red_light_waypoint is None or self.waypoints is None or \
+		self.red_light_waypoint < 0:
 		return False
 	if self.red_light_waypoint >= len(self.waypoints):
 	    rospy.logerr("invalid red light waypoint, out of range")
