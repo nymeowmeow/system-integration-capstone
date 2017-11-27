@@ -66,8 +66,8 @@ class WaypointUpdater(object):
 		continue
 
 	    start_pos = self.next_waypoint()
-	    if (start_pos % 100) == 0:
-	        rospy.logerr('start pos: {}'.format(start_pos))
+	    #if (start_pos % 100) == 0:
+	        #rospy.logerr('start pos: {}'.format(start_pos))
 	    end = start_pos + LOOKAHEAD_WPS
 	    if end > len(self.waypoints):
 		endpos = end - len(self.waypoints) 
